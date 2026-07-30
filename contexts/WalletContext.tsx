@@ -1,5 +1,4 @@
 'use client';
-
 /**
  * WalletContext — Stellar wallet connection state.
  *
@@ -17,7 +16,6 @@
  * pattern. AbortController integration ensures graceful cancellation of
  * in-flight operations when the wallet disconnects.
  */
-
 import React, {
   createContext,
   useCallback,
@@ -88,6 +86,7 @@ export class Mutex {
     });
   }
 
+  
   private _release() {
     const next = this._queue.shift();
     if (next) {
