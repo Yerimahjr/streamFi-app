@@ -143,12 +143,14 @@ export default function CreatePage() {
       const timeoutId = setTimeout(() => controller.abort('timeout'), RECIPIENT_CHECK_TIMEOUT_MS);
 
       try {
-        const exists = await checkRecipientExists(recipient);
+        // Add a 10-second timeout to prevent an infinite loading state (#123)
+        const exists = await checkRecipientExists(recipient, { timeoutMs: 10_000 });
         if (!isCurrent()) return;
         setRecipientStatus(exists ? 'valid' : 'not-found');
-      } catch {
+      } catch (err) {
         // Network / RPC error — don't block the user, but surface a warning.
         if (!isCurrent()) return;
+        console.error('Recipient check failed:', err);
         setRecipientStatus('error');
       } finally {
         clearTimeout(timeoutId);
