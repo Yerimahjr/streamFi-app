@@ -90,6 +90,11 @@ export default function CreatePage() {
     'idle' | 'checking' | 'valid' | 'not-found' | 'error'
   >('idle');
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // #309 — request-sequence guard so a stale in-flight checkRecipientExists()
+  // call can't overwrite recipientStatus after a newer one has already
+  // resolved (or started), mirroring app/stream/[id]/page.tsx's loadSeq/
+  // isCurrent() pattern.
+  const recipientSeqRef = useRef(0);
 
   const { register, handleSubmit, watch, formState: { errors } } = useForm<FormValues>({
     resolver: zodResolver(schema),
@@ -115,6 +120,9 @@ export default function CreatePage() {
   //   3. If the component unmounts mid-flight the state update is suppressed.
   const RECIPIENT_CHECK_TIMEOUT_MS = 10_000;
   useEffect(() => {
+    const seq = ++recipientSeqRef.current;
+    const isCurrent = () => seq === recipientSeqRef.current;
+
     const validLength = recipient?.length === 56;
 
     if (!validLength) {
@@ -135,14 +143,12 @@ export default function CreatePage() {
 
       try {
         const exists = await checkRecipientExists(recipient);
-        if (!controller.signal.aborted) {
-          setRecipientStatus(exists ? 'valid' : 'not-found');
-        }
+        if (!isCurrent()) return;
+        setRecipientStatus(exists ? 'valid' : 'not-found');
       } catch {
         // Network / RPC error — don't block the user, but surface a warning.
-        if (!controller.signal.aborted) {
-          setRecipientStatus('error');
-        }
+        if (!isCurrent()) return;
+        setRecipientStatus('error');
       } finally {
         clearTimeout(timeoutId);
       }
