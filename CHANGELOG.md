@@ -5,6 +5,9 @@ All notable changes are documented here. Format based on [Keep a Changelog](http
 ## [Unreleased]
 
 ### Added
+- Create form warns when the recipient is a contract (`C…`) address and blocks submit until the
+  user confirms the contract can call `withdraw()` — a SAC, token contract, or vault without that
+  call path would otherwise lock the whole deposit with no client-side warning
 - `/transactions` — responsive transaction history page (card layout on mobile, table on desktop)
 - Demo data layer — pages render without deployed contracts when env vars are empty
 

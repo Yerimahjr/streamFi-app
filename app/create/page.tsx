@@ -32,6 +32,21 @@ const schema = z.object({
   // 10 years mirrors DripGovernor's own default max_duration_seconds cap.
   durationSeconds: z.coerce.number().min(3600, 'Minimum 1 hour').max(315_360_000, 'Maximum 10 years'),
   clawback:        z.boolean(),
+  // #392 — only meaningful for a C… recipient; see the superRefine below.
+  acknowledgeContractRecipient: z.boolean(),
+}).superRefine((data, ctx) => {
+  // A contract can be set as a stream's recipient, but only an address that
+  // can *call* DripStream::withdraw as the recipient can ever pull the funds
+  // out. A SAC, a plain token contract, or a vault without that call path
+  // leaves the whole deposit stranded, and nothing on-chain can tell us in
+  // advance which kind we were handed — so the user has to say so.
+  if (isValidStellarContract(data.recipient) && !data.acknowledgeContractRecipient) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['acknowledgeContractRecipient'],
+      message: 'Confirm this contract can call withdraw() before creating the stream.',
+    });
+  }
 });
 
 /**
@@ -81,15 +96,30 @@ export default function CreatePage() {
   // isCurrent() pattern.
   const recipientSeqRef = useRef(0);
 
-  const { register, handleSubmit, watch, formState: { errors } } = useForm<FormValues>({
+  const { register, handleSubmit, watch, setValue, formState: { errors } } = useForm<FormValues>({
     resolver: zodResolver(schema),
-    defaultValues: { token: 'XLM', clawback: false, durationSeconds: 2592000 },
+    defaultValues: {
+      token: 'XLM',
+      clawback: false,
+      durationSeconds: 2592000,
+      acknowledgeContractRecipient: false,
+    },
   });
 
   const deposit  = watch('depositAmount');
   const duration = watch('durationSeconds');
   const token    = watch('token');
   const recipient = watch('recipient');
+  const acknowledgedContractRecipient = watch('acknowledgeContractRecipient');
+
+  // #392 — a C… recipient needs an explicit acknowledgement before submit.
+  const isContractRecipient = !!recipient && isValidStellarContract(recipient);
+
+  // The acknowledgement is about one specific contract, so editing the
+  // address always withdraws it.
+  useEffect(() => {
+    setValue('acknowledgeContractRecipient', false);
+  }, [recipient, setValue]);
 
   // Debounced async on-chain account existence check. Only fires once the
   // address satisfies the Zod schema (56 chars, starts with G) so we never
@@ -208,6 +238,13 @@ export default function CreatePage() {
     }
     if (recipientStatus === 'checking') {
       setError('Still verifying the recipient address — please wait a moment and try again.');
+      return;
+    }
+    // #392 — belt and braces alongside the schema check, mirroring the
+    // recipientStatus guards above: never sign a deposit into a contract the
+    // user hasn't confirmed can withdraw from the stream.
+    if (isValidStellarContract(data.recipient) && !data.acknowledgeContractRecipient) {
+      setError('Confirm this contract can call withdraw() before creating the stream.');
       return;
     }
     setPending(true);
@@ -363,13 +400,17 @@ export default function CreatePage() {
           {!errors.recipient && recipientStatus === 'not-found' && (
             <p className="text-xs text-red-600 mt-1" role="alert">
               <span aria-hidden="true">✗ </span>
-              Account not found on-chain — the recipient must be funded before receiving a stream.
+              {isContractRecipient
+                ? 'Contract not found on-chain — nothing is deployed at this address.'
+                : 'Account not found on-chain — the recipient must be funded before receiving a stream.'}
             </p>
           )}
           {!errors.recipient && recipientStatus === 'valid' && (
             <p className="text-xs text-gray-500 mt-1" role="status">
               <span aria-hidden="true">✓ </span>
-              Account verified on-chain.
+              {isContractRecipient
+                ? 'Contract found on-chain. Whether it can withdraw cannot be verified — see below.'
+                : 'Account verified on-chain.'}
             </p>
           )}
           {!errors.recipient && recipientStatus === 'error' && (
@@ -377,6 +418,43 @@ export default function CreatePage() {
               Could not check this address — the RPC endpoint may be unreachable or
               misconfigured. This is not a statement about the recipient; you may still proceed.
             </p>
+          )}
+
+          {/* #392 — a contract recipient can only receive a stream it is able
+              to withdraw from. Nothing on-chain reveals that ahead of time, so
+              the risk is stated plainly and submit stays blocked until the
+              user acknowledges it. */}
+          {!errors.recipient && isContractRecipient && (
+            <div
+              className="mt-2 border border-red-200 rounded px-3 py-2"
+              role="alert"
+            >
+              <p className="text-xs font-semibold text-red-600">
+                Contract recipient — the deposit may be unrecoverable.
+              </p>
+              <p className="text-xs text-gray-600 dark:text-gray-400 mt-1">
+                Only an address that can call <span className="font-mono">withdraw()</span> on the
+                stream can ever pull these tokens out. A token or SAC contract, or a vault without
+                that call path, leaves the full deposit locked — and only the current recipient or
+                sender can re-point the stream afterwards.
+              </p>
+              <label className={`flex items-start gap-2 mt-2 cursor-pointer ${styles.flexRowStart}`}>
+                <input
+                  {...register('acknowledgeContractRecipient')}
+                  type="checkbox"
+                  className="mt-0.5 rounded border-gray-300"
+                />
+                <span className="text-xs text-gray-700 dark:text-gray-300">
+                  I control this contract and confirm it can call{' '}
+                  <span className="font-mono">withdraw()</span> on the stream.
+                </span>
+              </label>
+              {errors.acknowledgeContractRecipient && (
+                <p className="text-xs text-red-600 mt-1">
+                  {errors.acknowledgeContractRecipient.message}
+                </p>
+              )}
+            </div>
           )}
         </div>
 
@@ -486,7 +564,8 @@ export default function CreatePage() {
             !connected ||
             rateWouldBeZero ||
             recipientStatus === 'not-found' ||
-            recipientStatus === 'checking'
+            recipientStatus === 'checking' ||
+            (isContractRecipient && !acknowledgedContractRecipient)
           }
           className="btn-primary w-full"
         >
