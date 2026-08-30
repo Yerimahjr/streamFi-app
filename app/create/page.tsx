@@ -122,22 +122,26 @@ export default function CreatePage() {
     const controller = new AbortController();
 
     debounceRef.current = setTimeout(async () => {
-      // Hard timeout: if the RPC never responds, reject after 10s so the
-      // spinner is always cleared.
-      const timeoutId = setTimeout(() => controller.abort('timeout'), RECIPIENT_CHECK_TIMEOUT_MS);
-
       try {
-        // Add a 10-second timeout to prevent an infinite loading state (#123)
-        const exists = await checkRecipientExists(recipient, { timeoutMs: 10_000 });
+        // checkRecipientExists owns both the deadline (so the spinner is
+        // always cleared, #123) and the cancellation — the controller's
+        // signal is now actually passed through, where before it was created
+        // per effect run and never handed to anything.
+        const exists = await checkRecipientExists(recipient, {
+          timeoutMs: RECIPIENT_CHECK_TIMEOUT_MS,
+          signal:    controller.signal,
+        });
         if (!isCurrent()) return;
         setRecipientStatus(exists ? 'valid' : 'not-found');
       } catch (err) {
-        // Network / RPC error — don't block the user, but surface a warning.
-        if (!isCurrent()) return;
+        // Cancellation isn't a failure — the cleanup that aborted this check
+        // already reset the status for the address that replaced it.
+        if (controller.signal.aborted || !isCurrent()) return;
+        // Anything else means the check couldn't be made (#391): a hung or
+        // misconfigured RPC, a proxy error page. Warn, but never claim the
+        // recipient doesn't exist on this evidence.
         console.error('Recipient check failed:', err);
         setRecipientStatus('error');
-      } finally {
-        clearTimeout(timeoutId);
       }
     }, 600);
 
@@ -370,7 +374,8 @@ export default function CreatePage() {
           )}
           {!errors.recipient && recipientStatus === 'error' && (
             <p className="text-xs text-gray-400 mt-1" role="status">
-              Could not verify account — network error. You may still proceed.
+              Could not check this address — the RPC endpoint may be unreachable or
+              misconfigured. This is not a statement about the recipient; you may still proceed.
             </p>
           )}
         </div>
