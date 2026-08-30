@@ -42,6 +42,10 @@ vi.mock('@/lib/env', () => ({
   getFactoryContractId: () => FACTORY_ID,
 }));
 
+vi.mock('@/lib/soroban', () => ({
+  checkRecipientExists: vi.fn().mockResolvedValue(true),
+}));
+
 const mockCheckAllowance = vi.fn();
 const mockApprove = vi.fn();
 vi.mock('@/lib/token-allowance-gateway', () => ({
@@ -95,6 +99,7 @@ async function fillRecipient(container: HTMLElement) {
   const recipientInput = container.querySelector('input[placeholder="G…"]') as HTMLInputElement;
   await act(async () => {
     setFieldValue(recipientInput, TEST_RECIPIENT);
+    await new Promise((resolve) => setTimeout(resolve, 650));
   });
 }
 

@@ -450,45 +450,49 @@ export function WalletProvider({
     const globalAbortCleanup = () => {
       operationAbortController.abort();
     };
-    abortControllerRef.current?.signal.addEventListener('abort', globalAbortCleanup, { once: true });
+    const globalAbortSignal = abortControllerRef.current?.signal;
+    globalAbortSignal?.addEventListener('abort', globalAbortCleanup, { once: true });
 
-    // Acquire a semaphore permit — limits concurrent Freighter popups
-    const release = await semaphoreRef.current.acquire(combinedSignal);
+    try {
+      // Acquire a semaphore permit — limits concurrent Freighter popups
+      const release = await semaphoreRef.current.acquire(combinedSignal);
 
-    return trackOperation(async () => {
-      try {
-        if (combinedSignal.aborted) {
-          throw new Error('Operation aborted');
+      return await trackOperation(async () => {
+        try {
+          if (combinedSignal.aborted) {
+            throw new Error('Operation aborted');
+          }
+
+          const requestId = pendingRequestIdRef.current;
+          const currentPublicKey = publicKeyRef.current;
+          const { signedTxXdr, error } = await withTimeout(
+            signTransaction(xdr, {
+              networkPassphrase: getNetworkPassphrase(),
+              address:           currentPublicKey ?? undefined,
+            }),
+            WALLET_CONNECT_TIMEOUT_MS,
+            'Freighter signing',
+          );
+
+          if (combinedSignal.aborted) {
+            throw new Error('Operation aborted');
+          }
+
+          if (requestId !== pendingRequestIdRef.current || currentPublicKey !== publicKeyRef.current) {
+            throw new Error('Wallet state changed during signing. Please retry the operation.');
+          }
+
+          if (error || !signedTxXdr) {
+            throw new Error(error?.message ?? 'Failed to sign transaction in Freighter.');
+          }
+          return signedTxXdr;
+        } finally {
+          release();
         }
-
-        const requestId = pendingRequestIdRef.current;
-        const currentPublicKey = publicKeyRef.current;
-        const { signedTxXdr, error } = await withTimeout(
-          signTransaction(xdr, {
-            networkPassphrase: getNetworkPassphrase(),
-            address:           currentPublicKey ?? undefined,
-          }),
-          WALLET_CONNECT_TIMEOUT_MS,
-          'Freighter signing',
-        );
-
-        if (combinedSignal.aborted) {
-          throw new Error('Operation aborted');
-        }
-
-        if (requestId !== pendingRequestIdRef.current || currentPublicKey !== publicKeyRef.current) {
-          throw new Error('Wallet state changed during signing. Please retry the operation.');
-        }
-
-        if (error || !signedTxXdr) {
-          throw new Error(error?.message ?? 'Failed to sign transaction in Freighter.');
-        }
-        return signedTxXdr;
-      } finally {
-        release();
-        abortControllerRef.current?.signal.removeEventListener('abort', globalAbortCleanup);
-      }
-    });
+      });
+    } finally {
+      globalAbortSignal?.removeEventListener('abort', globalAbortCleanup);
+    }
   }, [publicKey, trackOperation]);
 
   // ── Memoized context value ─────────────────────────────────────────────────

@@ -359,6 +359,33 @@ describe('WalletContext', () => {
     document.body.removeChild(container);
   });
 
+  it('removes the session abort listener after signTx settles', async () => {
+    mockedFreighter.isConnected.mockResolvedValue({ isConnected: true });
+    mockedFreighter.requestAccess.mockResolvedValue({ address: 'GACLEANUPTEST', error: null } as any);
+    mockedFreighter.signTransaction.mockResolvedValue({ signedTxXdr: 'signed-xdr', error: null } as any);
+
+    const { stateRef, container } = mountWallet();
+
+    await act(async () => {
+      await stateRef.current.connect();
+    });
+
+    const addSpy = vi.spyOn(AbortSignal.prototype, 'addEventListener');
+    const removeSpy = vi.spyOn(AbortSignal.prototype, 'removeEventListener');
+    await act(async () => {
+      await stateRef.current.signTx('AAAA');
+    });
+
+    const abortAdds = addSpy.mock.calls.filter(([type]) => type === 'abort');
+    const abortRemovals = removeSpy.mock.calls.filter(([type]) => type === 'abort');
+    expect(abortAdds.length).toBeGreaterThan(0);
+    expect(abortRemovals).toHaveLength(abortAdds.length);
+
+    addSpy.mockRestore();
+    removeSpy.mockRestore();
+    document.body.removeChild(container);
+  });
+
   // TODO.md Phase 4, item 15 — the Mutex/queue-based concurrency work in
   // signTx has no test exercising it under real concurrent load.
   it('processes 100 concurrent signTx() calls without exceeding the concurrency limit or dropping any', async () => {
