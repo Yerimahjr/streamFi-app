@@ -157,11 +157,21 @@ export async function withBoundedParallel<T>(
   const results: SafeOperationResult<any>[] = [];
   let index = 0;
 
+  // When the caller passes no outer signal, fall back to a single signal
+  // created once for the whole batch — not one per item. A fresh
+  // `new AbortController().signal` built inline per iteration is discarded
+  // the instant it's created: nothing holds the controller, so `.abort()`
+  // can never fire and every handler's signal reads `aborted: false`
+  // forever, silently defeating per-item cancellation (#221). One shared
+  // controller at least makes the signal a coherent, referenceable object
+  // — the same instance every item receives.
+  const fallbackSignal = options?.signal ?? new AbortController().signal;
+
   const worker = async () => {
     while (index < items.length && !options?.signal?.aborted) {
       const i = index++;
       try {
-        const result = await handler(items[i]!, i, options?.signal ?? new AbortController().signal);
+        const result = await handler(items[i]!, i, fallbackSignal);
         results[i] = result;
       } catch (err) {
         results[i] = {

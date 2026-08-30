@@ -15,6 +15,7 @@ All notable changes are documented here. Format based on [Keep a Changelog](http
 - `force_cancel()` action in `StreamActions` for recipients (once contract support is merged)
 
 ### Fixed
+- `withBoundedParallel` no longer manufactures and discards a fresh `AbortController` per item when the caller passes no outer signal — every handler in the batch now receives one shared, referenceable `AbortSignal` instead of a definitionally-dead one (#221)
 - `refreshStreamData` now invalidates active queries once instead of immediately refetching the same queries a second time
 - Removed the unused multisig transaction scaffold, which had no callers or tests and discarded the clipboard success result
 - `scValToU64`/`scValToI128` and `streamsBySender`/`streamsByRecipient` now boundary-check the RPC
