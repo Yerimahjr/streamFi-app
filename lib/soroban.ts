@@ -300,6 +300,18 @@ export interface InvokeContractOptions {
   idempotencyKey?: string;
 }
 
+/** Result of a confirmed contract invocation. */
+export interface InvokeContractResult {
+  /** The submitted transaction's hash. */
+  hash: string;
+  /**
+   * The contract function's return value, as reported by GetTransactionStatus
+   * on SUCCESS. `undefined` if the confirmed transaction carried no retval
+   * (e.g. the invoked function returns void).
+   */
+  returnValue?: xdr.ScVal;
+}
+
 /**
  * Build a contract-call transaction, simulate it to get the fee + footprint,
  * assemble it, hand it to the wallet for signing, then submit and poll.
@@ -313,6 +325,7 @@ export interface InvokeContractOptions {
  * @param args       XDR ScVal arguments
  * @param signTx     Wallet sign callback from WalletContext (supports AbortSignal)
  * @param options    Optional abort signal, timeout, and idempotency key
+ * @returns          Transaction hash and the confirmed transaction's return value
  * @returns          Transaction hash — confirmed, or (if polling could not
  *                   reach a verdict in time) submitted-and-pending. Throws
  *                   `TransactionRevertedError` if the contract reverted.
@@ -324,7 +337,7 @@ export async function invokeContract(
   args:       xdr.ScVal[],
   signTx:     (xdrBase64: string, signal?: AbortSignal) => Promise<string>,
   options?:   InvokeContractOptions,
-): Promise<string> {
+): Promise<InvokeContractResult> {
   const signal = options?.signal;
   const timeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const idempotencyKey = options?.idempotencyKey;
@@ -333,7 +346,7 @@ export async function invokeContract(
   validateTimeout(timeoutMs);
 
   // If an idempotency key is provided, deduplicate
-  const operation = async (): Promise<string> => {
+  const operation = async (): Promise<InvokeContractResult> => {
     if (signal?.aborted) throw new OperationAbortedError();
 
     const passphrase = getNetworkPassphrase();
@@ -413,6 +426,25 @@ export async function invokeContract(
       throw new Error('Submission returned no transaction hash');
     }
 
+        if (status.status === SorobanRpc.Api.GetTransactionStatus.SUCCESS) {
+          // #362 — surface the confirmed transaction's return value instead
+          // of discarding it. Contract functions like DripFactory::create_stream
+          // return data (the assigned stream_id) that callers otherwise have
+          // no way to obtain without a separate re-query.
+          return { hash, returnValue: status.returnValue };
+        }
+        if (status.status === SorobanRpc.Api.GetTransactionStatus.FAILED) {
+          // Non-retryable — transaction executed and failed on-chain
+          recordFailure();
+          throw new Error(`Transaction failed: ${hash}`);
+        }
+        // status === 'NOT_FOUND' — keep polling
+      }
+      throw new Error(`Transaction timed out after ${MAX_POLL_ATTEMPTS}s: ${hash}`);
+    }, {
+      context: `invokeContract(${method})`,
+      signal,
+    });
     return pollForConfirmation(hash, timeoutMs, signal);
   };
 
