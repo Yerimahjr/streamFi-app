@@ -195,7 +195,7 @@ export interface RevokeAllowanceArgs {
  */
 export class TokenAllowanceGateway {
   private _records = new Map<string, InternalRecord>();
-  private _concurrencySemaphore: { available: number; queue: Array<() => void> } = {
+  private _concurrencySemaphore: { available: number; queue: Array<{ resolve: () => void; reject: (err: Error) => void }> } = {
     available: 5,
     queue: [],
   };
@@ -257,12 +257,15 @@ export class TokenAllowanceGateway {
       let settled = false;
       let cleanup: (() => void) | undefined;
 
-      const entry = () => {
-        if (!settled) {
-          settled = true;
-          cleanup?.();
-          resolve(() => this._releaseConcurrency());
-        }
+      const entry = {
+        resolve: () => {
+          if (!settled) {
+            settled = true;
+            cleanup?.();
+            resolve(() => this._releaseConcurrency());
+          }
+        },
+        reject,
       };
       this._concurrencySemaphore.queue.push(entry);
 
@@ -294,7 +297,7 @@ export class TokenAllowanceGateway {
   private _releaseConcurrency() {
     const next = this._concurrencySemaphore.queue.shift();
     if (next) {
-      next();
+      next.resolve();
     } else {
       this._concurrencySemaphore.available++;
     }
@@ -545,11 +548,11 @@ export class TokenAllowanceGateway {
     }
     this._records.clear();
 
-    // Drain concurrency queue
+    // Drain concurrency queue — reject waiters so they don't proceed
+    // against a disconnected wallet
     while (this._concurrencySemaphore.queue.length > 0) {
       const entry = this._concurrencySemaphore.queue.shift();
-      // Entries waiting for a slot get rejected — they'll retry on next call
-      entry?.();
+      entry?.reject(new OperationAbortedError('Gateway reset — wallet disconnected'));
     }
     this._concurrencySemaphore.available = this._maxConcurrency;
   }
