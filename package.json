@@ -11,7 +11,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@conduit-protocol/sdk": "github:conduit-protocol/conduit-sdk",
+    "@conduit-protocol/sdk": "git+https://github.com/conduit-protocol/streamFi-sdk.git",
     "@hookform/resolvers": "^5.4.0",
     "@stellar/freighter-api": "^6.0.1",
     "@stellar/stellar-sdk": "^12.0.0",
