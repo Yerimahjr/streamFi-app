@@ -9,6 +9,11 @@ All notable changes are documented here. Format based on [Keep a Changelog](http
 - Demo data layer — pages render without deployed contracts when env vars are empty
 
 ### Changed
+- One shared `withTimeout` in `lib/with-timeout.ts` replaces the three near-identical copies that
+  had drifted apart in `app/create/page.tsx`, `contexts/WalletContext.tsx` and `lib/soroban.ts`;
+  the shared helper is `AbortSignal`-aware, validates its deadline, and never leaves an abort
+  listener behind. Operation error types moved to `lib/errors.ts` (re-exported from
+  `lib/safe-operations.ts`, so existing imports are unchanged)
 - Stream cards responsive layout with truncated addresses and progress indicator
 - `/stream/[id]/history` — event log tab showing all past withdrawals, pauses, and top-ups
 - Mobile layout improvements for stream detail page

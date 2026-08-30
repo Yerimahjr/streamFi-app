@@ -31,7 +31,8 @@ import {
   normalizeError,
   OperationAbortedError,
 } from './safe-operations';
-import { isValidStellarContract } from './stellar-address';
+import { withTimeout } from './with-timeout';
+import { isValidStellarContract, isValidStellarPublicKey } from './stellar-address';
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
@@ -196,36 +197,10 @@ async function withRetry<T>(
 
 // ── Timeout wrapper ───────────────────────────────────────────────────────────
 
-async function withTimeout<T>(
-  promise: Promise<T>,
-  ms: number,
-  context?: string,
-  signal?: AbortSignal,
-): Promise<T> {
-  validateTimeout(ms);
-  if (signal?.aborted) throw new OperationAbortedError();
-
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  let onAbort: (() => void) | undefined;
-  const timeoutPromise = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => {
-      reject(
-        context
-          ? new Error(`${context} timed out after ${ms}ms`)
-          : new Error(`Operation timed out after ${ms}ms`),
-        );
-      }, ms);
-    onAbort = () => reject(new OperationAbortedError());
-    signal?.addEventListener('abort', onAbort, { once: true });
-  });
-
-  try {
-    return await Promise.race([promise, timeoutPromise]);
-  } finally {
-    clearTimeout(timer);
-    if (onAbort) signal?.removeEventListener('abort', onAbort);
-  }
-}
+// `withTimeout` used to be reimplemented here; it now lives in
+// lib/with-timeout.ts alongside the copies that had drifted out of
+// app/create/page.tsx and contexts/WalletContext.tsx (#393). The signature is
+// unchanged: withTimeout(promise, ms, context, signal).
 
 function validateTimeout(ms: number): void {
   if (!Number.isSafeInteger(ms) || ms <= 0) {

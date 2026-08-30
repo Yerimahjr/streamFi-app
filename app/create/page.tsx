@@ -16,7 +16,8 @@ import { getFactoryContractId } from '@/lib/env';
 import { getTokenAllowanceGateway } from '@/lib/token-allowance-gateway';
 import styles from './CreateStream.module.css';
 import { toStroops, fromStroops, wouldRateTruncateToZero } from '@/lib/format';
-import { isValidStellarAddress } from '@/lib/stellar-address';
+import { isValidStellarAddress, isValidStellarContract } from '@/lib/stellar-address';
+import { withTimeout } from '@/lib/with-timeout';
 
 
 const schema = z.object({
@@ -41,19 +42,14 @@ const schema = z.object({
 const CREATE_STREAM_TIMEOUT_MS = 60_000;
 
 /**
- * Race a promise against a timeout. Rejects with a descriptive error
- * if the operation does not complete within `ms` milliseconds.
+ * Timeout message for the create pipeline. It is rendered inline in the form,
+ * so it stays form-specific rather than using the shared helper's default
+ * `… timed out after 60000ms` (#393).
  */
-function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => {
-      reject(new Error(`${label} timed out after ${ms / 1000}s. The network may be congested — please try again.`));
-    }, ms);
-    promise.then(
-      (val) => { clearTimeout(timer); resolve(val); },
-      (err) => { clearTimeout(timer); reject(err); },
-    );
-  });
+function createTimeoutError(ms: number, label?: string): Error {
+  return new Error(
+    `${label ?? 'The operation'} timed out after ${ms / 1000}s. The network may be congested — please try again.`,
+  );
 }
 
 type FormValues = z.infer<typeof schema>;
@@ -288,7 +284,7 @@ export default function CreatePage() {
           clawback:   data.clawback,
         }, signTx),
         CREATE_STREAM_TIMEOUT_MS,
-        'Stream creation',
+        { label: 'Stream creation', onTimeout: createTimeoutError },
       );
 
       // Invalidate and refetch active stream data so the streams/dashboard
