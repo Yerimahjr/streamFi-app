@@ -77,11 +77,24 @@ export class Mutex {
       const entry = (release: () => void) => {
         cleanup();
         if (abortSignal?.aborted) {
+          // `_release()` has already dequeued this waiter and handed the lock
+          // over to it, so rejecting without releasing strands the lock
+          // forever and deadlocks every later connect() (#389). Pass it on.
+          release();
           reject(new Error('Operation aborted'));
           return;
         }
         resolve(release);
       };
+
+      // A signal that is already aborted never fires an 'abort' event, so the
+      // listener below would never run and this waiter would sit in the queue
+      // until `_release()` handed it the lock — the same leak, reached from
+      // the other side (#389). Reject before queueing instead.
+      if (abortSignal?.aborted) {
+        reject(new Error('Operation aborted'));
+        return;
+      }
       this._queue.push(entry);
 
       if (abortSignal) {
@@ -155,6 +168,12 @@ export class Semaphore {
         resolver: (release: () => void) => {
           cleanup();
           if (signal?.aborted) {
+            // `_release()` has already dequeued this waiter and handed the
+            // permit to it without incrementing `_available`. Rejecting
+            // without releasing loses the permit permanently, and after
+            // `maxConcurrentOperations` of these the semaphore is exhausted
+            // and every signTx hangs forever (#389). Pass it on instead.
+            release();
             reject(new Error('Operation aborted'));
             return;
           }
