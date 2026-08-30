@@ -210,12 +210,12 @@ export class TokenAllowanceGateway {
 
   // ── Record management ─────────────────────────────────────────────────────
 
-  private _key(token: string, spender: string): string {
-    return `${token}::${spender}`;
+  private _key(owner: string, token: string, spender: string): string {
+    return `${owner}::${token}::${spender}`;
   }
 
-  private _getOrCreate(token: string, spender: string): InternalRecord {
-    const key = this._key(token, spender);
+  private _getOrCreate(owner: string, token: string, spender: string): InternalRecord {
+    const key = this._key(owner, token, spender);
     let record = this._records.get(key);
     if (!record) {
       record = {
@@ -229,10 +229,10 @@ export class TokenAllowanceGateway {
   }
 
   /**
-   * Read-only snapshot of the current allowance record for a token+spender pair.
+   * Read-only snapshot of the current allowance record for an owner+token+spender triple.
    */
-  getAllowance(token: string, spender: string): AllowanceRecord {
-    const key = this._key(token, spender);
+  getAllowance(owner: string, token: string, spender: string): AllowanceRecord {
+    const key = this._key(owner, token, spender);
     const record = this._records.get(key);
     if (!record) {
       return { allowance: 0n, state: 'idle' };
@@ -312,7 +312,7 @@ export class TokenAllowanceGateway {
    */
   async approve(args: ApproveAllowanceArgs): Promise<SafeOperationResult<string>> {
     const { token, spender, amount, source, signTx, signal } = args;
-    const record = this._getOrCreate(token, spender);
+    const record = this._getOrCreate(source, token, spender);
     const idempotencyKey = makeOperationKey(source, token, 'approve', spender, amount.toString());
 
     // Reject if a previous operation is in-flight for this pair (unless same idempotency key)
@@ -499,7 +499,7 @@ export class TokenAllowanceGateway {
       const allowance = scValToI128(result);
 
       // Update local cache
-      const record = this._getOrCreate(token, spender);
+      const record = this._getOrCreate(owner, token, spender);
       record.allowance = allowance;
       if (record.state === 'idle' || record.state === 'confirmed') {
         record.state = 'confirmed';
