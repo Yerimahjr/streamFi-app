@@ -34,6 +34,7 @@ import {
 import { getNetworkPassphrase } from '@/lib/env';
 import { withTimeout } from '@/lib/with-timeout';
 import { queryClient } from '@/lib/queryClient';
+import { resetTokenAllowanceGateway } from '@/lib/token-allowance-gateway';
 import { useTransactionStore } from '@/lib/store';
 import { truncateAddress } from '@/lib/format';
 import { useRouter } from 'next/navigation';
@@ -455,6 +456,7 @@ export function WalletProvider({
     // Clear all cached stream data so a subsequent wallet connection
     // cannot see the previous wallet's streams (fixes #81 & #146).
     queryClient.clear();
+    resetTokenAllowanceGateway();
     clearTransactions();
     router.push('/');
   }, [clearTransactions, router]);
@@ -485,6 +487,7 @@ export function WalletProvider({
       setPublicKey(address);
       saveWalletSession({ key: address, name: 'Freighter' });
       queryClient.clear();
+      resetTokenAllowanceGateway();
       clearTransactions();
       toast(`Switched to ${truncateAddress(address)}`, { icon: '🔄' });
     });
