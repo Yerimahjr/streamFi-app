@@ -15,6 +15,9 @@ All notable changes are documented here. Format based on [Keep a Changelog](http
 - `force_cancel()` action in `StreamActions` for recipients (once contract support is merged)
 
 ### Fixed
+- Deferred service-worker reloads while tracked transactions are still in flight, removed the unused
+  `NotificationCenter`, restored a system-theme path in `ThemeToggle`, and made unconfigured
+  transaction history render as a neutral coming-soon state.
 - `refreshStreamData` now invalidates active queries once instead of immediately refetching the same queries a second time
 - Removed the unused multisig transaction scaffold, which had no callers or tests and discarded the clipboard success result
 - `scValToU64`/`scValToI128` and `streamsBySender`/`streamsByRecipient` now boundary-check the RPC
