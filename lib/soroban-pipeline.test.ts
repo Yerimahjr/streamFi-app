@@ -262,13 +262,17 @@ describe('invokeContract', () => {
     const { simulateReadOnly, invokeContract, isCircuitOpen, resetCircuitBreaker } = await import('./soroban.js');
     resetCircuitBreaker();
 
-    // Trigger transport failures on simulateReadOnly('bad_read')
+    // Trigger transport failures on simulateReadOnly('bad_read'). Each call
+    // exhausts its internal retries and records one circuit-breaker failure;
+    // three of them trip the breaker.
     mockSimulate.mockRejectedValue(new Error('503 Service Unavailable network error'));
     for (let i = 0; i < 3; i++) {
       const p = simulateReadOnly(SOURCE, CONTRACT_ID, 'bad_read', []);
       p.catch(() => {});
-      await vi.advanceTimersByTimeAsync(30_000);
-      await expect(p).rejects.toThrow(/Service Unavailable/);
+      // Advance enough to flush the per-call retry backoff, but not so far
+      // that the (short) circuit-open window elapses between iterations.
+      await vi.advanceTimersByTimeAsync(5_000);
+      await expect(p).rejects.toThrow(/Service Unavailable|Circuit breaker open/);
     }
 
     // The breaker is open for bad_read

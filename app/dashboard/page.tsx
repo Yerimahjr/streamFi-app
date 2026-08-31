@@ -66,7 +66,7 @@ async function loadRows(
   for (let i = 0; i < uniqueIds.length; i++) {
     const r = addrResults[i];
     if (signal.aborted) return { rows: [], failedCount: 0 };
-    if (r.status === "fulfilled" && r.value && typeof r.value === "string") {
+    if (r && r.status === "fulfilled" && r.value && typeof r.value === "string") {
       addrPairs.push({ id: uniqueIds[i]!, rowId: uniqueIds[i]!.toString(), addr: r.value });
     } else {
       failedCount++;
@@ -92,6 +92,7 @@ async function loadRows(
       const r = results[j];
       const pair = batch[j]!;
       if (
+        r &&
         r.status === "fulfilled" &&
         r.value[0] &&
         typeof r.value[0] === "object" &&

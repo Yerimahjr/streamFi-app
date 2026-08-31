@@ -45,7 +45,6 @@ import {
   touchWalletSession,
 } from '@/lib/wallet-storage';
 import { resetServer, resetCircuitBreaker } from '@/lib/soroban';
-import { resetTokenAllowanceGateway } from '@/lib/token-allowance-gateway';
 import { clearIdempotencyKeys } from '@/lib/safe-operations';
 import toast from 'react-hot-toast';
 
