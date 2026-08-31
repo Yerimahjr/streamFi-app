@@ -77,19 +77,27 @@ export default function StreamPage() {
     setLoading(true);
     setError(null);
     try {
+      if (!/^\d+$/.test(id)) {
+        if (isCurrent()) setError('Invalid stream ID.');
+        return;
+      }
+
       const addr = await getStreamAddress(publicKey, BigInt(id));
       if (!isCurrent()) return;
       if (!addr) { setError('Stream not found.'); return; }
 
-      const [streamInfo, wAmt] = await Promise.all([
-        getStreamInfo(publicKey, addr),
-        getWithdrawable(publicKey, addr),
-      ]);
-
+      const streamInfo = await getStreamInfo(publicKey, addr);
       if (!isCurrent()) return;
+
       setStreamAddress(addr);
       setInfo(streamInfo);
-      setWithdrawable(wAmt);
+
+      try {
+        const wAmt = await getWithdrawable(publicKey, addr);
+        if (isCurrent()) setWithdrawable(wAmt);
+      } catch {
+        if (isCurrent()) setWithdrawable(0n);
+      }
     } catch (e) {
       if (!isCurrent()) return;
       setError(e instanceof Error ? e.message : 'Failed to load stream.');
@@ -109,16 +117,16 @@ export default function StreamPage() {
     const addr = streamAddress;
     const t = setInterval(async () => {
       try {
-        const [streamInfo, wAmt] = await Promise.all([
-          getStreamInfo(publicKey, addr),
-          getWithdrawable(publicKey, addr),
-        ]);
-        if (mounted.current) {
-          setInfo(streamInfo);
-          setWithdrawable(wAmt);
-        }
+        const streamInfo = await getStreamInfo(publicKey, addr);
+        if (mounted.current) setInfo(streamInfo);
       } catch {
         /* keep last-good data */
+      }
+      try {
+        const wAmt = await getWithdrawable(publicKey, addr);
+        if (mounted.current) setWithdrawable(wAmt);
+      } catch {
+        /* keep last-good withdrawable */
       }
     }, STREAM_REFRESH_MS);
     return () => clearInterval(t);
@@ -200,6 +208,7 @@ export default function StreamPage() {
             <RateTicker
               ratePerSecond={info.ratePerSecond}
               startBalance={withdrawable}
+              endTime={info.endTime}
             />
           </p>
           <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">{tokenSymbol}</p>

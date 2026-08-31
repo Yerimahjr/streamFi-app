@@ -50,19 +50,19 @@ export async function getStreamAddress(
   options?: { signal?: AbortSignal },
 ): Promise<string | null> {
   if (isMock()) return MOCK_ADDRESSES[streamId.toString()] ?? null;
-  try {
-    const result = await simulateReadOnly(
-      source,
-      FACTORY()!,
-      'stream_address',
-      [nativeToScVal(streamId, { type: 'u64' })],
-      options,
-    );
-    if (result.switch().name === 'scvVoid') return null;
-    return Address.fromScVal(result).toString();
-  } catch {
-    return null;
-  }
+  const result = await simulateReadOnly(
+    source,
+    FACTORY()!,
+    'stream_address',
+    [nativeToScVal(streamId, { type: 'u64' })],
+    options,
+  );
+  // scvVoid is DripFactory::stream_address returning Option::None — the only
+  // case that means "this stream ID does not exist". RPC/network failures and
+  // a misconfigured factory env var must propagate so callers don't mistake
+  // an outage for a missing stream.
+  if (result.switch().name === 'scvVoid') return null;
+  return Address.fromScVal(result).toString();
 }
 
 /**

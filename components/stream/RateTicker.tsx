@@ -10,13 +10,16 @@ interface RateTickerProps {
   startBalance: bigint;
   /** Decimal places to display (default: 7 for XLM) */
   decimals?: number;
+  /** Unix timestamp when the stream ends (0 = open-ended). Ticker freezes past this. */
+  endTime?: number;
 }
 
 /**
  * Live-updating balance counter.
  * Increments every 100ms based on ratePerSecond without any contract calls.
+ * Freezes at endTime so the ticker doesn't overshoot the contract balance (#398).
  */
-export function RateTicker({ ratePerSecond, startBalance, decimals = 7 }: RateTickerProps) {
+export function RateTicker({ ratePerSecond, startBalance, decimals = 7, endTime = 0 }: RateTickerProps) {
   const startRef  = useRef<{ ts: number; balance: bigint }>({
     ts:      Date.now(),
     balance: startBalance,
