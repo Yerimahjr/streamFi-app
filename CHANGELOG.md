@@ -23,6 +23,7 @@ All notable changes are documented here. Format based on [Keep a Changelog](http
 - `force_cancel()` action in `StreamActions` for recipients (once contract support is merged)
 
 ### Fixed
+- `withBoundedParallel` no longer manufactures and discards a fresh `AbortController` per item when the caller passes no outer signal — every handler in the batch now receives one shared, referenceable `AbortSignal` instead of a definitionally-dead one (#221)
 - `checkRecipientExists` now reads the recipient's ledger entry directly and treats only an empty
   result as "does not exist"; an unrelated RPC failure (a JSON-RPC `Method not found`, a 404 from a
   mistyped `NEXT_PUBLIC_SOROBAN_RPC_URL`, a proxy error page) is reported as "couldn't check"
