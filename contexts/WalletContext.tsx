@@ -43,6 +43,9 @@ import {
   loadWalletSession,
   saveWalletSession,
 } from '@/lib/wallet-storage';
+import { resetServer, resetCircuitBreaker } from '@/lib/soroban';
+import { resetTokenAllowanceGateway } from '@/lib/token-allowance-gateway';
+import { clearIdempotencyKeys } from '@/lib/safe-operations';
 import toast from 'react-hot-toast';
 
 // ── Concurrency Primitives ───────────────────────────────────────────────────
@@ -458,6 +461,10 @@ export function WalletProvider({
     queryClient.clear();
     resetTokenAllowanceGateway();
     clearTransactions();
+    resetServer();
+    resetCircuitBreaker();
+    resetTokenAllowanceGateway();
+    clearIdempotencyKeys();
     router.push('/');
   }, [clearTransactions, router]);
 
@@ -489,6 +496,10 @@ export function WalletProvider({
       queryClient.clear();
       resetTokenAllowanceGateway();
       clearTransactions();
+      resetServer();
+      resetCircuitBreaker();
+      resetTokenAllowanceGateway();
+      clearIdempotencyKeys();
       toast(`Switched to ${truncateAddress(address)}`, { icon: '🔄' });
     });
 

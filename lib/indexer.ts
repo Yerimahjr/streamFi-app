@@ -1,4 +1,4 @@
-import { getStreamAddress, getStreamInfo } from './stream';
+import { getStreamAddress, getStreamInfo, type StreamInfo } from './stream';
 import { streamsBySender, streamsByRecipient, isMock } from './factory';
 
 export interface TransactionRow {
@@ -121,12 +121,14 @@ const INDEXER_MAX_STREAMS = 5_000;
 
 /** Walk every page of a `streams_by_*` lookup until a short (final) page. */
 async function fetchAllStreamIds(
-  fn: (source: string, addr: string, offset: number, limit: number) => Promise<bigint[]>,
+  fn: (source: string, addr: string, offset: number, limit: number, options?: { signal?: AbortSignal }) => Promise<bigint[]>,
   publicKey: string,
+  options?: { signal?: AbortSignal },
 ): Promise<bigint[]> {
   const ids: bigint[] = [];
   for (let offset = 0; offset < INDEXER_MAX_STREAMS; offset += INDEXER_PAGE_SIZE) {
-    const page = await fn(publicKey, publicKey, offset, INDEXER_PAGE_SIZE);
+    if (options?.signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+    const page = await fn(publicKey, publicKey, offset, INDEXER_PAGE_SIZE, options);
     ids.push(...page);
     if (page.length < INDEXER_PAGE_SIZE) return ids;
   }
@@ -136,25 +138,95 @@ async function fetchAllStreamIds(
   return ids;
 }
 
-// Mock GraphQL / Indexer fetcher
-export async function fetchStreamsFromIndexer(publicKey: string, role: 'sender' | 'recipient') {
-  // In a real implementation, this would be a single fetch() call to a GraphQL endpoint
-  // returning all streams instantly.
-  // e.g., const response = await fetch('/api/graphql', { method: 'POST', body: ... })
+export interface IndexedStreamRow {
+  id: string;
+  address?: string;
+  info: StreamInfo;
+}
+
+export interface FetchStreamsResult {
+  streams: IndexedStreamRow[];
+  failedIds: string[];
+  errors: Array<{ id: string; error: Error }>;
+}
+
+export interface FetchStreamsOptions {
+  signal?: AbortSignal;
+  maxConcurrency?: number;
+  onPartialFailure?: (failedIds: string[], errors: Array<{ id: string; error: Error }>) => void;
+}
+
+/**
+ * Fetch all streams for a given wallet address and role.
+ *
+ * Uses bounded concurrency instead of sequential N+1 roundtrips (#342) and
+ * surfaces partial failure via structured result, callback, and console warning.
+ */
+export async function fetchStreamsFromIndexer(
+  publicKey: string,
+  role: 'sender' | 'recipient',
+  options?: FetchStreamsOptions,
+): Promise<IndexedStreamRow[] & FetchStreamsResult> {
+  const signal = options?.signal;
+  if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
 
   const ids = await fetchAllStreamIds(
     role === 'sender' ? streamsBySender : streamsByRecipient,
     publicKey,
+    options,
   );
 
-  const rows = [];
-  for (const id of ids) {
-    try {
-      const addr = await getStreamAddress(publicKey, id);
-      if (!addr) continue;
-      const info = await getStreamInfo(publicKey, addr);
-      rows.push({ id: id.toString(), info });
-    } catch { /* skip */ }
+  const maxConcurrency = options?.maxConcurrency ?? 10;
+  const streams: IndexedStreamRow[] = [];
+  const failedIds: string[] = [];
+  const errors: Array<{ id: string; error: Error }> = [];
+
+  let nextIndex = 0;
+  const worker = async () => {
+    while (nextIndex < ids.length) {
+      if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+      const idx = nextIndex++;
+      const id = ids[idx];
+      if (id === undefined) break;
+
+      const strId = id.toString();
+      try {
+        const addr = await getStreamAddress(publicKey, id, { signal });
+        if (!addr) {
+          throw new Error(`Stream address not found for stream ${strId}`);
+        }
+        const info = await getStreamInfo(publicKey, addr, { signal });
+        if (!info) {
+          throw new Error(`Stream info not found for stream ${strId} at ${addr}`);
+        }
+        streams.push({ id: strId, address: addr, info });
+      } catch (err: unknown) {
+        const errorObj = err instanceof Error ? err : new Error(String(err));
+        if (signal?.aborted || errorObj.name === 'AbortError') {
+          throw errorObj;
+        }
+        failedIds.push(strId);
+        errors.push({ id: strId, error: errorObj });
+      }
+    }
+  };
+
+  const poolSize = Math.min(ids.length, Math.max(1, maxConcurrency));
+  const workers = Array.from({ length: poolSize }, () => worker());
+  await Promise.all(workers);
+
+  if (failedIds.length > 0) {
+    console.warn(
+      `fetchStreamsFromIndexer: ${failedIds.length} stream(s) failed to load: ${failedIds.join(', ')}`,
+    );
+    options?.onPartialFailure?.(failedIds, errors);
   }
-  return rows;
+
+  const result = Object.assign(streams, {
+    streams,
+    failedIds,
+    errors,
+  });
+
+  return result as IndexedStreamRow[] & FetchStreamsResult;
 }
