@@ -25,7 +25,7 @@ const schema = z.object({
   recipient:       z.string()
     .min(56, 'Must be a valid Stellar address (56 characters)')
     .max(56, 'Must be a valid Stellar address (56 characters)')
-    .refine(isValidStellarAddress, 'Must be a valid Stellar address (G… or C…)'),
+    .refine(isValidStellarPublicKey, 'Must be a valid Stellar public key (G…)'),
   token:           z.string().min(1, 'Select a token'),
   depositAmount:   z.string().regex(/^\d+(\.\d+)?$/, 'Enter a valid amount').refine(val => parseFloat(val) > 0, 'Amount must be greater than 0'),
   // #319 — no upper bound previously meant an accidental extra digit (e.g.
@@ -375,7 +375,7 @@ export default function CreatePage() {
             className="input font-mono"
           />
           {errors.recipient && (
-            <p className="text-xs text-red-600 mt-1">{errors.recipient.message}</p>
+            <p className="text-xs text-red-600 mt-1">{String(errors.recipient.message)}</p>
           )}
           {/* On-chain existence feedback — only shown once the address passes
               the Zod format check (no redundancy with live Zod validation) */}

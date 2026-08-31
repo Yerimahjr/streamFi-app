@@ -190,6 +190,7 @@ describe('invokeContract', () => {
   });
 
   it('falls back to a multiple of BASE_FEE when fee stats are unavailable', async () => {
+    vi.setSystemTime(Date.now() + 31_000);
     mockGetFeeStats.mockRejectedValue(new Error('method not supported'));
     mockSimulate.mockResolvedValue(simSuccess());
     mockGetTransaction.mockResolvedValue({ status: 'SUCCESS' });
@@ -216,7 +217,7 @@ describe('invokeContract', () => {
     promise.catch(() => {});
     await vi.advanceTimersByTimeAsync(2000);
 
-    expect(await promise).toEqual(expect.objectContaining({ hash: 'deadbeef' }));
+    expect((await promise).hash).toBe('deadbeef');
     expect(signTx).toHaveBeenCalledTimes(1);
     expect(mockSend).toHaveBeenCalledTimes(1);
   });
@@ -231,7 +232,7 @@ describe('invokeContract', () => {
     promise.catch(() => {});
     await vi.advanceTimersByTimeAsync(31_000);
 
-    expect(await promise).toEqual(expect.objectContaining({ hash: 'deadbeef' }));
+    expect((await promise).hash).toBe('deadbeef');
     expect(signTx).toHaveBeenCalledTimes(1);
     expect(mockSend).toHaveBeenCalledTimes(1);
   });

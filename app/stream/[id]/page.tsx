@@ -108,31 +108,31 @@ export default function StreamPage() {
 
   useEffect(() => { loadStream(); }, [loadStream]);
 
-  // Background refresh so a pause/cancel from another device/tab is reflected
-  // without a manual reload. Silent — never touches `loading`, and a transient
-  // RPC error just keeps the last-good data (the 1s tick still handles the
-  // time-based `ended` transition) (#401).
   useEffect(() => {
-    if (!publicKey || !streamAddress) return;
-    const addr = streamAddress;
-    const t = setInterval(async () => {
-      try {
-        const streamInfo = await getStreamInfo(publicKey, addr);
-        if (mounted.current) setInfo(streamInfo);
-      } catch {
-        /* keep last-good data */
-      }
-      try {
-        const wAmt = await getWithdrawable(publicKey, addr);
-        if (mounted.current) setWithdrawable(wAmt);
-      } catch {
-        /* keep last-good withdrawable */
-      }
-    }, STREAM_REFRESH_MS);
-    return () => clearInterval(t);
-  }, [publicKey, streamAddress]);
+    if (!info || status !== 'active' || info.endTime === 0) return;
 
-  const status: StreamStatus = info ? deriveStatus(info, nowSeconds) : 'active';
+    const endAt = info.endTime * 1000;
+    let id: ReturnType<typeof setTimeout>;
+    let active = true;
+    const scheduleEnd = () => {
+      const remaining = endAt - Date.now();
+      if (remaining <= 0) {
+        setStatus('ended');
+        if (publicKey && streamAddress) {
+          void getWithdrawable(publicKey, streamAddress)
+            .then((amount) => { if (active) setWithdrawable(amount); })
+            .catch(() => { /* keep the last known balance on refresh failure */ });
+        }
+        return;
+      }
+      id = setTimeout(scheduleEnd, Math.min(remaining, 2_147_483_647));
+    };
+    scheduleEnd();
+    return () => {
+      active = false;
+      clearTimeout(id);
+    };
+  }, [info, status, publicKey, streamAddress]);
 
   // ── Render states ─────────────────────────────────────────────────────────
 
@@ -210,6 +210,17 @@ export default function StreamPage() {
               startBalance={withdrawable}
               endTime={info.endTime}
             />
+          </p>
+          <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">{tokenSymbol}</p>
+        </Card>
+      )}
+
+      {/* Ended — show the final claimable balance */}
+      {status === 'ended' && (
+        <Card className="mb-6 text-center">
+          <p className="text-xs text-gray-400 dark:text-gray-500 mb-1">Final balance, ready to withdraw</p>
+          <p className="text-4xl font-black font-mono tabular-nums">
+            {fromStroops(withdrawable)}
           </p>
           <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">{tokenSymbol}</p>
         </Card>
