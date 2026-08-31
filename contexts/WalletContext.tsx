@@ -32,6 +32,7 @@ import {
   WatchWalletChanges,
 } from '@stellar/freighter-api';
 import { getNetworkPassphrase } from '@/lib/env';
+import { withTimeout } from '@/lib/with-timeout';
 import { queryClient } from '@/lib/queryClient';
 import { useTransactionStore } from '@/lib/store';
 import { truncateAddress } from '@/lib/format';
@@ -76,11 +77,24 @@ export class Mutex {
       const entry = (release: () => void) => {
         cleanup();
         if (abortSignal?.aborted) {
+          // `_release()` has already dequeued this waiter and handed the lock
+          // over to it, so rejecting without releasing strands the lock
+          // forever and deadlocks every later connect() (#389). Pass it on.
+          release();
           reject(new Error('Operation aborted'));
           return;
         }
         resolve(release);
       };
+
+      // A signal that is already aborted never fires an 'abort' event, so the
+      // listener below would never run and this waiter would sit in the queue
+      // until `_release()` handed it the lock — the same leak, reached from
+      // the other side (#389). Reject before queueing instead.
+      if (abortSignal?.aborted) {
+        reject(new Error('Operation aborted'));
+        return;
+      }
       this._queue.push(entry);
 
       if (abortSignal) {
@@ -154,6 +168,12 @@ export class Semaphore {
         resolver: (release: () => void) => {
           cleanup();
           if (signal?.aborted) {
+            // `_release()` has already dequeued this waiter and handed the
+            // permit to it without incrementing `_available`. Rejecting
+            // without releasing loses the permit permanently, and after
+            // `maxConcurrentOperations` of these the semaphore is exhausted
+            // and every signTx hangs forever (#389). Pass it on instead.
+            release();
             reject(new Error('Operation aborted'));
             return;
           }
@@ -226,6 +246,17 @@ const DEFAULT_MAX_CONCURRENT_OPS = 5;
  */
 const WALLET_CONNECT_TIMEOUT_MS = 15_000;
 
+/**
+ * Timeout message for wallet calls. This one reaches the user directly
+ * (ConnectButton renders it), so it stays wallet-specific rather than using
+ * the shared helper's default `… timed out after 15000ms` (#393).
+ */
+function walletTimeoutError(ms: number, label?: string): Error {
+  return new Error(
+    `${label ?? 'Wallet operation'} timed out after ${ms / 1000}s — the wallet or network may be unresponsive.`,
+  );
+}
+
 // ── Types ────────────────────────────────────────────────────────────────────
 
 export interface OperationResult<T = string> {
@@ -272,22 +303,6 @@ export function useWallet(): WalletState {
 }
 
 // ── Provider ─────────────────────────────────────────────────────────────────
-
-/**
- * Race a promise against a timeout. Rejects with a clear error if the
- * promise does not resolve within `ms` milliseconds.
- */
-function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => {
-      reject(new Error(`${label} timed out after ${ms / 1000}s — the wallet or network may be unresponsive.`));
-    }, ms);
-    promise.then(
-      (val) => { clearTimeout(timer); resolve(val); },
-      (err) => { clearTimeout(timer); reject(err); },
-    );
-  });
-}
 
 export function WalletProvider({
   children,
@@ -386,7 +401,7 @@ export function WalletProvider({
       const { isConnected: hasFreighter } = await withTimeout(
         freighterIsConnected(),
         WALLET_CONNECT_TIMEOUT_MS,
-        'Freighter connection check',
+        { label: 'Freighter connection check', onTimeout: walletTimeoutError },
       );
       if (requestId !== pendingRequestIdRef.current || !isMountedRef.current) return;
 
@@ -401,7 +416,7 @@ export function WalletProvider({
       const { address, error } = await withTimeout(
         requestAccess(),
         WALLET_CONNECT_TIMEOUT_MS,
-        'Freighter access request',
+        { label: 'Freighter access request', onTimeout: walletTimeoutError },
       );
       if (requestId !== pendingRequestIdRef.current || !isMountedRef.current) return;
       if (error || !address) {
@@ -515,7 +530,7 @@ export function WalletProvider({
             address:           currentPublicKey ?? undefined,
           }),
           WALLET_CONNECT_TIMEOUT_MS,
-          'Freighter signing',
+          { label: 'Freighter signing', onTimeout: walletTimeoutError },
         );
 
         if (combinedSignal.aborted) {

@@ -20,6 +20,7 @@
 
 import {
   Contract,
+  Keypair,
   SorobanRpc,
   TransactionBuilder,
   BASE_FEE,
@@ -31,7 +32,8 @@ import {
   normalizeError,
   OperationAbortedError,
 } from './safe-operations';
-import { isValidStellarContract } from './stellar-address';
+import { withTimeout } from './with-timeout';
+import { isValidStellarContract, isValidStellarPublicKey } from './stellar-address';
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
@@ -196,36 +198,10 @@ async function withRetry<T>(
 
 // ── Timeout wrapper ───────────────────────────────────────────────────────────
 
-async function withTimeout<T>(
-  promise: Promise<T>,
-  ms: number,
-  context?: string,
-  signal?: AbortSignal,
-): Promise<T> {
-  validateTimeout(ms);
-  if (signal?.aborted) throw new OperationAbortedError();
-
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  let onAbort: (() => void) | undefined;
-  const timeoutPromise = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => {
-      reject(
-        context
-          ? new Error(`${context} timed out after ${ms}ms`)
-          : new Error(`Operation timed out after ${ms}ms`),
-        );
-      }, ms);
-    onAbort = () => reject(new OperationAbortedError());
-    signal?.addEventListener('abort', onAbort, { once: true });
-  });
-
-  try {
-    return await Promise.race([promise, timeoutPromise]);
-  } finally {
-    clearTimeout(timer);
-    if (onAbort) signal?.removeEventListener('abort', onAbort);
-  }
-}
+// `withTimeout` used to be reimplemented here; it now lives in
+// lib/with-timeout.ts alongside the copies that had drifted out of
+// app/create/page.tsx and contexts/WalletContext.tsx (#393). The signature is
+// unchanged: withTimeout(promise, ms, context, signal).
 
 function validateTimeout(ms: number): void {
   if (!Number.isSafeInteger(ms) || ms <= 0) {
@@ -611,17 +587,55 @@ export function scValToU64(val: xdr.ScVal): bigint {
 }
 
 /**
+ * The ledger key whose presence proves a recipient address exists on-chain.
+ *
+ * - G… public key  → the account entry itself.
+ * - C… contract    → the contract's instance entry, which every deployed
+ *                    contract has and which is always persistent.
+ *
+ * Mirrors the keys `Server.getAccount()` / `Server.getContractData()` build
+ * internally, so the lookup below is the same one — minus their habit of
+ * rejecting with a `{ code: 404 }` object that the caller has to interpret.
+ */
+function recipientLedgerKey(address: string): xdr.LedgerKey {
+  if (isValidStellarContract(address)) {
+    return xdr.LedgerKey.contractData(
+      new xdr.LedgerKeyContractData({
+        contract:   new Contract(address).address().toScAddress(),
+        key:        xdr.ScVal.scvLedgerKeyContractInstance(),
+        durability: xdr.ContractDataDurability.persistent(),
+      }),
+    );
+  }
+  if (!isValidStellarPublicKey(address)) {
+    throw new Error(`Not a valid Stellar address: ${address}`);
+  }
+  return xdr.LedgerKey.account(
+    new xdr.LedgerKeyAccount({
+      accountId: Keypair.fromPublicKey(address).xdrPublicKey(),
+    }),
+  );
+}
+
+/**
  * Check whether a Stellar address exists on-chain.
  *
- * - For G… public keys: uses `getAccount()` to check if the account is funded.
- * - For C… contract addresses: uses `getContractData()` to check if the
- *   contract exists in the ledger.
+ * Asks the RPC for the address's ledger entry directly: an empty `entries`
+ * array is the ledger stating the address is not there, which is the only
+ * evidence this function accepts for `false`. Anything that throws — a
+ * transport failure, a JSON-RPC error, an HTTP 404 from a mistyped
+ * `NEXT_PUBLIC_SOROBAN_RPC_URL`, a proxy error page — propagates as
+ * "couldn't check".
  *
- * Returns `true` if the address exists, `false` if the RPC returns a
- * 404-style "not found" response.
- *
- * Throws for any other network error so callers can distinguish
- * "definitely does not exist" from "couldn't reach the network".
+ * This used to be decided by substring-matching the error text for
+ * "not found" or "404" (#391), which conflated three different things:
+ * a genuinely missing account, `Method not found` from a wrong RPC version,
+ * and a 404 from a broken RPC URL. The last two made the create form tell
+ * the user "Recipient account not found" when the recipient was fine and
+ * the RPC configuration was not. Worse, it never actually caught the case
+ * it was written for: `getAccount()` rejects with a plain
+ * `{ code: 404, message: … }` object, not an `Error`, so a real missing
+ * account stringified to "[object Object]" and matched nothing.
  *
  * Accepts an optional AbortSignal so callers can cancel in-flight checks
  * (e.g. when the user changes the address or navigates away) and an optional
@@ -630,6 +644,7 @@ export function scValToU64(val: xdr.ScVal): bigint {
  *
  * @param address    Stellar public key (G…) or contract address (C…)
  * @param options    Optional signal and timeout
+ * @returns          `true` / `false` when the ledger answered; throws when it didn't
  */
 export async function checkRecipientExists(
   address: string,
@@ -639,39 +654,17 @@ export async function checkRecipientExists(
 
   if (options?.signal?.aborted) throw new OperationAbortedError();
 
-  try {
-    if (isValidStellarContract(address)) {
-      // Contract existence check via getContractData (ledger entry lookup).
-      // We look up the contract's instance data — if the contract was
-      // deployed, this entry exists; if not, the RPC returns a 404.
-      await withTimeout(
-        getServer().getContractData(
-          address,
-          xdr.ScVal.scvLedgerKeyContractInstance(),
-        ),
-        timeoutMs,
-        'checkRecipientExists/contract',
-        options?.signal,
-      );
-    } else {
-      // Account existence check via getAccount.
-      await withTimeout(
-        getServer().getAccount(address),
-        timeoutMs,
-        'checkRecipientExists',
-        options?.signal,
-      );
-    }
-    return true;
-  } catch (err: unknown) {
-    // Re-throw abort/cancellation so callers can distinguish it from a
-    // network failure and skip updating React state after unmount.
-    if (err instanceof OperationAbortedError) throw err;
+  const { entries } = await withTimeout(
+    getServer().getLedgerEntries(recipientLedgerKey(address)),
+    timeoutMs,
+    'checkRecipientExists',
+    options?.signal,
+  );
 
-    // stellar-sdk throws an error whose message contains "404" or
-    // "not found" when the account/contract has never been created.
-    const message = err instanceof Error ? err.message : String(err);
-    if (/not found|404/i.test(message)) return false;
-    throw err;
+  // A response without an `entries` array is a malformed payload, not proof
+  // of absence — say so rather than reporting the recipient as nonexistent.
+  if (!Array.isArray(entries)) {
+    throw new Error('Malformed RPC payload: getLedgerEntries returned no entries array');
   }
+  return entries.length > 0;
 }
