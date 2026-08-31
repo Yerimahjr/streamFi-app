@@ -42,6 +42,12 @@ const THEME_KEY = 'theme';
 const THEME_VALUE = 'dark';
 
 beforeEach(() => {
+  const originalRemove = localStorageMock.removeItem;
+  localStorageMock.removeItem = () => {
+    throw new Error('storage unavailable');
+  };
+  clearWalletSession();
+  localStorageMock.removeItem = originalRemove;
   store.clear();
   // Simulate an unrelated key (e.g. next-themes persistence) being present.
   store.set(THEME_KEY, THEME_VALUE);
@@ -117,6 +123,28 @@ describe('loadWalletSession', () => {
       name: 'Freighter',
       expiresAt: expect.any(Number),
     });
+  });
+
+  it('prefers the in-memory fallback over a stale localStorage value when writes fail (#420)', () => {
+    store.set(
+      WALLET_STORAGE_KEY,
+      JSON.stringify({ key: 'GOLD', name: 'Freighter', expiresAt: Date.now() + 60000 }),
+    );
+
+    const originalSet = localStorageMock.setItem;
+    localStorageMock.setItem = () => {
+      throw new Error('storage unavailable');
+    };
+
+    saveWalletSession({
+      key: 'GNEW',
+      name: 'Freighter',
+      expiresAt: Date.now() + 120000,
+    });
+
+    localStorageMock.setItem = originalSet;
+
+    expect(loadWalletSession()?.key).toBe('GNEW');
   });
 
   it('purges and returns null when stored session expiresAt is in the past', () => {
