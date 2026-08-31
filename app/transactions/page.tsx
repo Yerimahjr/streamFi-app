@@ -4,7 +4,11 @@ import { AlertCircle, RefreshCw, Info } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { Card } from '@/components/ui/Card';
 import { formatTimestamp, truncateAddress } from '@/lib/format';
-import { fetchTransactionHistoryWithTimeout, type TransactionRow } from '@/lib/indexer';
+import {
+  fetchTransactionHistoryWithTimeout,
+  isIndexerNotConfiguredError,
+  type TransactionRow,
+} from '@/lib/indexer';
 import { useWallet } from '@/contexts/WalletContext';
 
 const TRANSACTIONS_QUERY_KEY = ['transactions'] as const;
@@ -26,10 +30,12 @@ export default function TransactionsPage() {
     queryKey: [...TRANSACTIONS_QUERY_KEY, publicKey],
     queryFn: () => fetchTransactionHistoryWithTimeout(publicKey),
     staleTime: 1000 * 30,
-    retry: 1,
+    retry: (failureCount, queryError) =>
+      !isIndexerNotConfiguredError(queryError) && failureCount < 1,
   });
 
   const isDemoData = connected && txs.length > 0;
+  const isIndexerComingSoon = status === 'error' && isIndexerNotConfiguredError(error);
 
   return (
     <div className="max-w-3xl mx-auto px-4 py-10">
@@ -59,10 +65,24 @@ export default function TransactionsPage() {
             <span className="text-sm">Loading transactions…</span>
           </div>
         </Card>
+      ) : isIndexerComingSoon ? (
+        <Card>
+          <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
+            <Info className="w-8 h-8 text-gray-400" aria-hidden="true" />
+            <div>
+              <p className="text-sm font-semibold text-black dark:text-white">
+                Transaction history is coming soon
+              </p>
+              <p className="text-xs text-gray-500 mt-1">
+                The indexer is not configured yet, so history will appear here once it is available.
+              </p>
+            </div>
+          </div>
+        </Card>
       ) : status === 'error' ? (
         <Card>
           <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
-            <AlertCircle className="w-8 h-8 text-red-500" aria-hidden="true" />
+            <AlertCircle className="w-8 h-8 text-gray-500" aria-hidden="true" />
             <div>
               <p className="text-sm font-semibold text-black dark:text-white">
                 Couldn&apos;t load transaction history

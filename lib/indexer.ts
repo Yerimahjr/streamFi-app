@@ -27,6 +27,17 @@ const DEMO_TXS: TransactionRow[] = [
 /** How long to wait for the subgraph before treating it as unavailable. */
 const SUBGRAPH_TIMEOUT_MS = 10_000;
 
+export class IndexerNotConfiguredError extends Error {
+  constructor() {
+    super('Transaction history is unavailable — the subgraph/indexer is not configured yet.');
+    this.name = 'IndexerNotConfiguredError';
+  }
+}
+
+export function isIndexerNotConfiguredError(error: unknown): error is IndexerNotConfiguredError {
+  return error instanceof IndexerNotConfiguredError;
+}
+
 /**
  * Fetch transaction history from the subgraph/indexer.
  *
@@ -76,11 +87,7 @@ export async function fetchTransactionHistory(
     if (mock) {
       resolve(publicKey ? DEMO_TXS : []);
     } else {
-      reject(
-        new Error(
-          'Transaction history is unavailable — the subgraph/indexer is not configured yet.',
-        ),
-      );
+      reject(new IndexerNotConfiguredError());
     }
   });
 }
