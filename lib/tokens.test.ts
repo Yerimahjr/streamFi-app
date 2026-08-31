@@ -43,6 +43,14 @@ describe('tokens module', () => {
     expect(getTokens('mainnet')).toEqual(TOKENS_MAINNET);
   });
 
+  it('returns no configured token contracts for local networks (#423)', () => {
+    const usdc = TOKENS_TESTNET.find((t) => t.symbol === 'USDC');
+
+    expect(getTokens('local')).toEqual([]);
+    expect(tokenBySymbol('USDC', 'local')).toBeUndefined();
+    expect(tokenByAddress(usdc!.address!, 'local')).toBeUndefined();
+  });
+
   it('looks up tokens by symbol or address', () => {
     const usdc = TOKENS_TESTNET.find((t) => t.symbol === 'USDC');
     expect(tokenBySymbol('USDC', 'testnet')).toEqual(usdc);
