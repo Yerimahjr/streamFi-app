@@ -50,19 +50,19 @@ export async function getStreamAddress(
   options?: { signal?: AbortSignal },
 ): Promise<string | null> {
   if (isMock()) return MOCK_ADDRESSES[streamId.toString()] ?? null;
-  try {
-    const result = await simulateReadOnly(
-      source,
-      FACTORY()!,
-      'stream_address',
-      [nativeToScVal(streamId, { type: 'u64' })],
-      options,
-    );
-    if (result.switch().name === 'scvVoid') return null;
-    return Address.fromScVal(result).toString();
-  } catch {
-    return null;
-  }
+  const result = await simulateReadOnly(
+    source,
+    FACTORY()!,
+    'stream_address',
+    [nativeToScVal(streamId, { type: 'u64' })],
+    options,
+  );
+  // scvVoid is DripFactory::stream_address returning Option::None — the only
+  // case that means "this stream ID does not exist". RPC/network failures and
+  // a misconfigured factory env var must propagate so callers don't mistake
+  // an outage for a missing stream.
+  if (result.switch().name === 'scvVoid') return null;
+  return Address.fromScVal(result).toString();
 }
 
 /**
@@ -186,6 +186,29 @@ export async function getStreamInfo(
 // ── Mutating ──────────────────────────────────────────────────────────────────
 
 /**
+ * Internal helper to invoke a contract method with optional abort signal support.
+ * Avoids code duplication across the 8 mutating wrappers.
+ */
+async function mutate(
+  sender:        string,
+  streamAddress: string,
+  method:        string,
+  args:          xdr.ScVal[],
+  signTx:        (xdr: string, signal?: AbortSignal) => Promise<string>,
+  signal?:       AbortSignal,
+): Promise<string> {
+  const { hash } = await invokeContract(
+    sender,
+    streamAddress,
+    method,
+    args,
+    signTx,
+    signal ? { signal } : undefined,
+  );
+  return hash;
+}
+
+/**
  * Withdraw the available balance from a stream.
  * Supports abort signal for cancellation.
  */
@@ -197,10 +220,7 @@ export async function withdraw(
   signal?:       AbortSignal,
 ): Promise<string> {
   if (isMock()) return 'mock_tx_hash_withdraw';
-  const { hash } = signal
-    ? await invokeContract(sender, streamAddress, 'withdraw', [nativeToScVal(amount, { type: 'i128' })], signTx, { signal })
-    : await invokeContract(sender, streamAddress, 'withdraw', [nativeToScVal(amount, { type: 'i128' })], signTx);
-  return hash;
+  return mutate(sender, streamAddress, 'withdraw', [nativeToScVal(amount, { type: 'i128' })], signTx, signal);
 }
 
 /**
@@ -213,10 +233,7 @@ export async function cancel(
   signal?:       AbortSignal,
 ): Promise<string> {
   if (isMock()) return 'mock_tx_hash_cancel';
-  const { hash } = signal
-    ? await invokeContract(sender, streamAddress, 'cancel', [], signTx, { signal })
-    : await invokeContract(sender, streamAddress, 'cancel', [], signTx);
-  return hash;
+  return mutate(sender, streamAddress, 'cancel', [], signTx, signal);
 }
 
 /**
@@ -229,10 +246,7 @@ export async function forceCancel(
   signal?:       AbortSignal,
 ): Promise<string> {
   if (isMock()) return 'mock_tx_hash_force_cancel';
-  const { hash } = signal
-    ? await invokeContract(sender, streamAddress, 'force_cancel', [], signTx, { signal })
-    : await invokeContract(sender, streamAddress, 'force_cancel', [], signTx);
-  return hash;
+  return mutate(sender, streamAddress, 'force_cancel', [], signTx, signal);
 }
 
 /**
@@ -245,10 +259,7 @@ export async function pause(
   signal?:       AbortSignal,
 ): Promise<string> {
   if (isMock()) return 'mock_tx_hash_pause';
-  const { hash } = signal
-    ? await invokeContract(sender, streamAddress, 'pause', [], signTx, { signal })
-    : await invokeContract(sender, streamAddress, 'pause', [], signTx);
-  return hash;
+  return mutate(sender, streamAddress, 'pause', [], signTx, signal);
 }
 
 /**
@@ -261,10 +272,7 @@ export async function resume(
   signal?:       AbortSignal,
 ): Promise<string> {
   if (isMock()) return 'mock_tx_hash_resume';
-  const { hash } = signal
-    ? await invokeContract(sender, streamAddress, 'resume', [], signTx, { signal })
-    : await invokeContract(sender, streamAddress, 'resume', [], signTx);
-  return hash;
+  return mutate(sender, streamAddress, 'resume', [], signTx, signal);
 }
 
 /**
@@ -278,10 +286,7 @@ export async function topUp(
   signal?:       AbortSignal,
 ): Promise<string> {
   if (isMock()) return 'mock_tx_hash_topup';
-  const { hash } = signal
-    ? await invokeContract(sender, streamAddress, 'top_up', [nativeToScVal(amount, { type: 'i128' })], signTx, { signal })
-    : await invokeContract(sender, streamAddress, 'top_up', [nativeToScVal(amount, { type: 'i128' })], signTx);
-  return hash;
+  return mutate(sender, streamAddress, 'top_up', [nativeToScVal(amount, { type: 'i128' })], signTx, signal);
 }
 
 /**
@@ -294,10 +299,7 @@ export async function clawback(
   signal?:       AbortSignal,
 ): Promise<string> {
   if (isMock()) return 'mock_tx_hash_clawback';
-  const { hash } = signal
-    ? await invokeContract(sender, streamAddress, 'clawback', [], signTx, { signal })
-    : await invokeContract(sender, streamAddress, 'clawback', [], signTx);
-  return hash;
+  return mutate(sender, streamAddress, 'clawback', [], signTx, signal);
 }
 
 /**
@@ -312,8 +314,5 @@ export async function transferRecipient(
 ): Promise<string> {
   if (isMock()) return 'mock_tx_hash_transfer_recipient';
   const args = [new Address(newRecipient).toScVal()];
-  const { hash } = signal
-    ? await invokeContract(sender, streamAddress, 'transfer_recipient', args, signTx, { signal })
-    : await invokeContract(sender, streamAddress, 'transfer_recipient', args, signTx);
-  return hash;
+  return mutate(sender, streamAddress, 'transfer_recipient', args, signTx, signal);
 }

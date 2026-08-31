@@ -14,6 +14,7 @@ import {
   clearWalletSession,
   loadWalletSession,
   saveWalletSession,
+  touchWalletSession,
 } from './wallet-storage.js';
 
 // ── Minimal localStorage stub ────────────────────────────────────────────────
@@ -42,6 +43,12 @@ const THEME_KEY = 'theme';
 const THEME_VALUE = 'dark';
 
 beforeEach(() => {
+  const originalRemove = localStorageMock.removeItem;
+  localStorageMock.removeItem = () => {
+    throw new Error('storage unavailable');
+  };
+  clearWalletSession();
+  localStorageMock.removeItem = originalRemove;
   store.clear();
   // Simulate an unrelated key (e.g. next-themes persistence) being present.
   store.set(THEME_KEY, THEME_VALUE);
@@ -119,6 +126,28 @@ describe('loadWalletSession', () => {
     });
   });
 
+  it('prefers the in-memory fallback over a stale localStorage value when writes fail (#420)', () => {
+    store.set(
+      WALLET_STORAGE_KEY,
+      JSON.stringify({ key: 'GOLD', name: 'Freighter', expiresAt: Date.now() + 60000 }),
+    );
+
+    const originalSet = localStorageMock.setItem;
+    localStorageMock.setItem = () => {
+      throw new Error('storage unavailable');
+    };
+
+    saveWalletSession({
+      key: 'GNEW',
+      name: 'Freighter',
+      expiresAt: Date.now() + 120000,
+    });
+
+    localStorageMock.setItem = originalSet;
+
+    expect(loadWalletSession()?.key).toBe('GNEW');
+  });
+
   it('purges and returns null when stored session expiresAt is in the past', () => {
     const pastTime = Date.now() - 10000;
     store.set(
@@ -147,5 +176,41 @@ describe('loadWalletSession', () => {
   it('returns null when the stored shape is missing required fields', () => {
     store.set(WALLET_STORAGE_KEY, JSON.stringify({ key: 'GTEST' }));
     expect(loadWalletSession()).toBeNull();
+  });
+});
+describe('touchWalletSession (#430)', () => {
+  it('slides a still-valid session expiry forward', () => {
+    const soon = Date.now() + 60_000;
+    store.set(
+      WALLET_STORAGE_KEY,
+      JSON.stringify({ key: 'GTEST', name: 'Freighter', expiresAt: soon }),
+    );
+    touchWalletSession();
+    const parsed = JSON.parse(store.get(WALLET_STORAGE_KEY)!);
+    expect(parsed.expiresAt).toBeGreaterThan(soon);
+  });
+
+  it('honours a custom ttl', () => {
+    saveWalletSession({ key: 'GTEST', name: 'Freighter' });
+    const before = Date.now();
+    touchWalletSession(5 * 60 * 1000);
+    const parsed = JSON.parse(store.get(WALLET_STORAGE_KEY)!);
+    expect(parsed.expiresAt).toBeGreaterThanOrEqual(before + 5 * 60 * 1000);
+    expect(parsed.expiresAt).toBeLessThanOrEqual(Date.now() + 5 * 60 * 1000);
+  });
+
+  it('is a no-op when no session is stored, leaving unrelated keys intact', () => {
+    touchWalletSession();
+    expect(store.has(WALLET_STORAGE_KEY)).toBe(false);
+    expect(store.get(THEME_KEY)).toBe(THEME_VALUE);
+  });
+
+  it('clears and does not re-stamp an already-expired session', () => {
+    store.set(
+      WALLET_STORAGE_KEY,
+      JSON.stringify({ key: 'GTEST', name: 'Freighter', expiresAt: Date.now() - 1000 }),
+    );
+    touchWalletSession();
+    expect(store.has(WALLET_STORAGE_KEY)).toBe(false);
   });
 });

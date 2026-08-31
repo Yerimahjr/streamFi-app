@@ -21,13 +21,19 @@ import type { StreamInfo } from '@/lib/stream';
 
 type StreamStatus = 'active' | 'paused' | 'ended' | 'cancelled';
 
-function deriveStatus(info: StreamInfo): StreamStatus {
+/** Derive the badge status from stream state and the *current* wall clock —
+ *  `nowSeconds` is passed in (not read here) so the page can re-derive it on a
+ *  tick and reflect the `active → ended` transition without a reload (#401). */
+function deriveStatus(info: StreamInfo, nowSeconds: number): StreamStatus {
   if (info.cancelled) return 'cancelled';
   if (info.paused)    return 'paused';
-  const now = Math.floor(Date.now() / 1000);
-  if (info.endTime > 0 && now >= info.endTime) return 'ended';
+  if (info.endTime > 0 && nowSeconds >= info.endTime) return 'ended';
   return 'active';
 }
+
+/** How often to re-fetch stream state so a pause/cancel done from another
+ *  device/tab shows up without a manual reload. */
+const STREAM_REFRESH_MS = 20_000;
 
 // ── Page ─────────────────────────────────────────────────────────────────────
 
@@ -40,7 +46,7 @@ export default function StreamPage() {
   const [streamAddress, setStreamAddress]         = useState<string | null>(null);
   const [info,          setInfo]                  = useState<StreamInfo | null>(null);
   const [withdrawable,  setWithdrawable]          = useState<bigint>(0n);
-  const [status,        setStatus]                = useState<StreamStatus>('active');
+  const [nowSeconds,    setNowSeconds]            = useState(() => Math.floor(Date.now() / 1000));
   const [loading,       setLoading]               = useState(true);
   const [error,         setError]                 = useState<string | null>(null);
 
@@ -48,12 +54,18 @@ export default function StreamPage() {
     return () => { mounted.current = false; };
   }, []);
 
+  // Tick the clock every second so a time-based `active → ended` transition
+  // (and RateTicker) update while the tab stays open (#401).
+  useEffect(() => {
+    const t = setInterval(() => setNowSeconds(Math.floor(Date.now() / 1000)), 1_000);
+    return () => clearInterval(t);
+  }, []);
+
   const loadStream = useCallback(async () => {
     if (!publicKey) {
       setStreamAddress(null);
       setInfo(null);
       setWithdrawable(0n);
-      setStatus('active');
       setLoading(false);
       setError(null);
       return;
@@ -65,20 +77,27 @@ export default function StreamPage() {
     setLoading(true);
     setError(null);
     try {
+      if (!/^\d+$/.test(id)) {
+        if (isCurrent()) setError('Invalid stream ID.');
+        return;
+      }
+
       const addr = await getStreamAddress(publicKey, BigInt(id));
       if (!isCurrent()) return;
       if (!addr) { setError('Stream not found.'); return; }
 
-      const [streamInfo, wAmt] = await Promise.all([
-        getStreamInfo(publicKey, addr),
-        getWithdrawable(publicKey, addr),
-      ]);
-
+      const streamInfo = await getStreamInfo(publicKey, addr);
       if (!isCurrent()) return;
+
       setStreamAddress(addr);
       setInfo(streamInfo);
-      setWithdrawable(wAmt);
-      setStatus(deriveStatus(streamInfo));
+
+      try {
+        const wAmt = await getWithdrawable(publicKey, addr);
+        if (isCurrent()) setWithdrawable(wAmt);
+      } catch {
+        if (isCurrent()) setWithdrawable(0n);
+      }
     } catch (e) {
       if (!isCurrent()) return;
       setError(e instanceof Error ? e.message : 'Failed to load stream.');

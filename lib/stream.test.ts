@@ -65,10 +65,10 @@ describe('getStreamAddress', () => {
     expect(await getStreamAddress(SENDER, 999n)).toBeNull();
   });
 
-  it('returns null (not throw) when the underlying call rejects', async () => {
+  it('lets failures propagate so callers can tell "not found" from "RPC down"', async () => {
     mockSimulateReadOnly.mockRejectedValue(new Error('rpc down'));
     const { getStreamAddress } = await import('./stream.js');
-    expect(await getStreamAddress(SENDER, 1n)).toBeNull();
+    await expect(getStreamAddress(SENDER, 1n)).rejects.toThrow('rpc down');
   });
 });
 

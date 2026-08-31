@@ -82,7 +82,7 @@ function simError(message: string) {
   return { error: message };
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.useFakeTimers();
   mockGetAccount.mockReset().mockResolvedValue({ accountId: () => SOURCE, sequenceNumber: () => '1' });
   mockSimulate.mockReset();
@@ -93,6 +93,10 @@ beforeEach(() => {
   mockAssemble.mockReset().mockReturnValue({
     build: () => ({ toEnvelope: () => ({ toXDR: () => 'assembled-envelope-b64' }) }),
   });
+  // Clear the inclusion-fee cache so the "falls back to BASE_FEE" test
+  // doesn't see a cached p70 from the previous test's successful fetch.
+  const { __clearFeeStatsCache } = await import('./soroban.js');
+  __clearFeeStatsCache();
 });
 
 afterEach(() => {
@@ -252,6 +256,35 @@ describe('invokeContract', () => {
     mockSimulate.mockResolvedValue(simSuccess(xdr.ScVal.scvU32(7)));
     const result = await simulateReadOnly(SOURCE, CONTRACT_ID, 'stream_count', []);
     expect(result.u32()).toBe(7);
+  });
+
+  // #344 — Circuit breaker state is scoped per-endpoint/operation and can be reset.
+  it('scopes circuit breaker so failures in one operation do not block unrelated operations (#344)', async () => {
+    const { simulateReadOnly, invokeContract, isCircuitOpen, resetCircuitBreaker } = await import('./soroban.js');
+    resetCircuitBreaker();
+
+    // Trigger transport failures on simulateReadOnly('bad_read'). Each call
+    // exhausts its internal retries and records one circuit-breaker failure;
+    // three of them trip the breaker.
+    mockSimulate.mockRejectedValue(new Error('503 Service Unavailable network error'));
+    for (let i = 0; i < 3; i++) {
+      const p = simulateReadOnly(SOURCE, CONTRACT_ID, 'bad_read', []);
+      p.catch(() => {});
+      // Advance enough to flush the per-call retry backoff, but not so far
+      // that the (short) circuit-open window elapses between iterations.
+      await vi.advanceTimersByTimeAsync(5_000);
+      await expect(p).rejects.toThrow(/Service Unavailable|Circuit breaker open/);
+    }
+
+    // The breaker is open for bad_read
+    expect(isCircuitOpen('simulateReadOnly(bad_read)')).toBe(true);
+
+    // Unrelated operation (e.g. withdraw) is NOT blocked by bad_read's open breaker
+    expect(isCircuitOpen('invokeContract(withdraw)')).toBe(false);
+
+    // Resetting clears the breaker
+    resetCircuitBreaker();
+    expect(isCircuitOpen('simulateReadOnly(bad_read)')).toBe(false);
   });
 
   // TODO.md Phase 4, item 17 — Phase 2 wired AbortController integration
