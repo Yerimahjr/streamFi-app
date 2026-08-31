@@ -74,7 +74,7 @@ export async function fetchTransactionHistory(
       return;
     }
     if (mock) {
-      resolve(publicKey ? DEMO_TXS : []);
+      resolve(publicKey ? [] : DEMO_TXS);
     } else {
       reject(
         new Error(
