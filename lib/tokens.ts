@@ -193,8 +193,8 @@ export async function approveAllowance(
   tokenAddress: string,
   spender: string,
   amount: bigint,
-  expirationLedger: number = DEFAULT_EXPIRATION_LEDGER,
   signTx: (xdr: string, signal?: AbortSignal) => Promise<string>,
+  expirationLedger: number = DEFAULT_EXPIRATION_LEDGER,
   options?: { signal?: AbortSignal },
 ): Promise<ApproveResult> {
   if (!source || !tokenAddress || !spender) {

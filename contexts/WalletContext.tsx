@@ -41,6 +41,9 @@ import {
   loadWalletSession,
   saveWalletSession,
 } from '@/lib/wallet-storage';
+import { resetServer, resetCircuitBreaker } from '@/lib/soroban';
+import { resetTokenAllowanceGateway } from '@/lib/token-allowance-gateway';
+import { clearIdempotencyKeys } from '@/lib/safe-operations';
 import toast from 'react-hot-toast';
 
 // ── Concurrency Primitives ───────────────────────────────────────────────────
@@ -441,6 +444,10 @@ export function WalletProvider({
     // cannot see the previous wallet's streams (fixes #81 & #146).
     queryClient.clear();
     clearTransactions();
+    resetServer();
+    resetCircuitBreaker();
+    resetTokenAllowanceGateway();
+    clearIdempotencyKeys();
     router.push('/');
   }, [clearTransactions, router]);
 
@@ -471,6 +478,10 @@ export function WalletProvider({
       saveWalletSession({ key: address, name: 'Freighter' });
       queryClient.clear();
       clearTransactions();
+      resetServer();
+      resetCircuitBreaker();
+      resetTokenAllowanceGateway();
+      clearIdempotencyKeys();
       toast(`Switched to ${truncateAddress(address)}`, { icon: '🔄' });
     });
 

@@ -85,7 +85,7 @@ describe('SEP-41 Token Allowance Helpers (#347, #348)', () => {
   it('approveAllowance throws an explicit error when arguments are missing (#348)', async () => {
     const mockSignTx = vi.fn();
     await expect(
-      approveAllowance('', VALID_TOKEN, VALID_SPENDER, 100n, 500000, mockSignTx)
+      approveAllowance('', VALID_TOKEN, VALID_SPENDER, 100n, mockSignTx, 500000)
     ).rejects.toThrow(/Missing required arguments for approveAllowance/);
   });
 
@@ -124,8 +124,8 @@ describe('SEP-41 Token Allowance Helpers (#347, #348)', () => {
       VALID_TOKEN,
       VALID_SPENDER,
       2000n,
+      mockSignTx,
       600000,
-      mockSignTx
     );
 
     expect(result.success).toBe(true);
@@ -142,5 +142,22 @@ describe('SEP-41 Token Allowance Helpers (#347, #348)', () => {
     // Verify 4 arguments were passed to invokeContract
     const passedArgs = vi.mocked(soroban.invokeContract).mock.calls[0]![3] as unknown[];
     expect(passedArgs).toHaveLength(4);
+  });
+
+  it('approveAllowance defaults expirationLedger when omitted (#385)', async () => {
+    vi.mocked(soroban.invokeContract).mockResolvedValueOnce({ hash: 'tx_hash_456' } as any);
+    const mockSignTx = vi.fn().mockResolvedValue('signed');
+
+    const result = await approveAllowance(
+      VALID_SOURCE,
+      VALID_TOKEN,
+      VALID_SPENDER,
+      2000n,
+      mockSignTx,
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.txHash).toBe('tx_hash_456');
+    expect(soroban.invokeContract).toHaveBeenCalled();
   });
 });

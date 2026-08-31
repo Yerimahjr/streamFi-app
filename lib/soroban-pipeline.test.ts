@@ -257,6 +257,31 @@ describe('invokeContract', () => {
     expect(result.u32()).toBe(7);
   });
 
+  // #344 — Circuit breaker state is scoped per-endpoint/operation and can be reset.
+  it('scopes circuit breaker so failures in one operation do not block unrelated operations (#344)', async () => {
+    const { simulateReadOnly, invokeContract, isCircuitOpen, resetCircuitBreaker } = await import('./soroban.js');
+    resetCircuitBreaker();
+
+    // Trigger transport failures on simulateReadOnly('bad_read')
+    mockSimulate.mockRejectedValue(new Error('503 Service Unavailable network error'));
+    for (let i = 0; i < 3; i++) {
+      const p = simulateReadOnly(SOURCE, CONTRACT_ID, 'bad_read', []);
+      p.catch(() => {});
+      await vi.advanceTimersByTimeAsync(30_000);
+      await expect(p).rejects.toThrow(/Service Unavailable/);
+    }
+
+    // The breaker is open for bad_read
+    expect(isCircuitOpen('simulateReadOnly(bad_read)')).toBe(true);
+
+    // Unrelated operation (e.g. withdraw) is NOT blocked by bad_read's open breaker
+    expect(isCircuitOpen('invokeContract(withdraw)')).toBe(false);
+
+    // Resetting clears the breaker
+    resetCircuitBreaker();
+    expect(isCircuitOpen('simulateReadOnly(bad_read)')).toBe(false);
+  });
+
   // TODO.md Phase 4, item 17 — Phase 2 wired AbortController integration
   // through the pipeline's retry/backoff and circuit breaker, but nothing
   // end-to-end confirmed a signal aborted mid-retry actually stops it.
