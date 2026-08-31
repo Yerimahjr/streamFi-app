@@ -15,6 +15,10 @@ All notable changes are documented here. Format based on [Keep a Changelog](http
 - `force_cancel()` action in `StreamActions` for recipients (once contract support is merged)
 
 ### Fixed
+- Wallet session reads now prefer the in-memory fallback over stale localStorage values when storage writes fail
+- ErrorBoundary schedules circuit-breaker recovery after committed updates instead of during render
+- Settings persistence now ignores unavailable localStorage writes and skips the initial re-write on mount
+- Local network token lookup no longer returns testnet contract addresses when local tokens are not configured
 - `refreshStreamData` now invalidates active queries once instead of immediately refetching the same queries a second time
 - Removed the unused multisig transaction scaffold, which had no callers or tests and discarded the clipboard success result
 - `scValToU64`/`scValToI128` and `streamsBySender`/`streamsByRecipient` now boundary-check the RPC
