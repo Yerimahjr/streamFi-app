@@ -25,10 +25,15 @@ export interface PersistedWallet {
 const memoryStore = new Map<string, string>();
 
 function safeGet(key: string): string | null {
+  if (memoryStore.has(key)) {
+    return memoryStore.get(key)!;
+  }
+
   try {
     // Some environments (old Safari private mode) allow reads but throw on
-    // writes, so a value may have landed in the memory fallback instead — try
-    // localStorage first, then fall back.
+    // writes, so a value may have landed in the memory fallback instead. When
+    // it has, that in-memory value is the current session and localStorage is
+    // only a fallback.
     if (typeof localStorage !== 'undefined') {
       const value = localStorage.getItem(key);
       if (value !== null) return value;
@@ -36,7 +41,7 @@ function safeGet(key: string): string | null {
   } catch {
     /* fall through to memory */
   }
-  return memoryStore.has(key) ? memoryStore.get(key)! : null;
+  return null;
 }
 
 function safeSet(key: string, value: string): void {
